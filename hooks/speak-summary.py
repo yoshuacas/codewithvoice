@@ -1,16 +1,17 @@
 #!/usr/bin/env python3
 """Claude Code Stop hook: speak a one-sentence summary of the turn.
 
-Reads the Stop-hook JSON from stdin, summarizes the assistant's final text
-with a fast model via `claude -p`, and drops the result into the
-codewithvoice speak spool, where a running bar app picks it up and speaks
+Reads the Stop-hook JSON from stdin (which carries a `transcript_path`, not
+the message itself), pulls the last assistant turn out of that transcript,
+summarizes it with a fast model via `claude -p`, and drops the result into
+the codewithvoice speak spool, where a running bar app picks it up and speaks
 it through Kokoro. Stdlib-only; degrades to the first sentences of the
 response if the summarizer call fails.
 
-Register in .claude/settings.json:
-    {"hooks": {"Stop": [{"type": "command",
-                         "command": "python3 hooks/speak-summary.py",
-                         "async": true, "timeout": 60}]}}
+Register in settings.json (each Stop entry is a {matcher?, hooks:[...]} group):
+    {"hooks": {"Stop": [{"hooks": [{"type": "command",
+                         "command": "python3 /abs/path/hooks/speak-summary.py",
+                         "async": true, "timeout": 60}]}]}}
 """
 
 from __future__ import annotations
@@ -35,9 +36,34 @@ PROMPT = (
 
 
 def final_text(payload: dict) -> str:
-    blocks = payload.get("assistant_message", {}).get("content", [])
+    """Text of the last assistant turn.
+
+    The Stop-hook payload does NOT carry the message inline — it gives a
+    `transcript_path` to a JSONL conversation log. Read it, find the last
+    `type == "assistant"` entry, and join its `message.content` text blocks.
+    """
+    path = payload.get("transcript_path")
+    if not path:
+        return ""
+    try:
+        lines = Path(path).read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return ""
+    last_blocks: list = []
+    for line in lines:
+        try:
+            entry = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if entry.get("type") != "assistant":
+            continue
+        content = entry.get("message", {}).get("content", [])
+        if isinstance(content, list):
+            last_blocks = content
     return "\n".join(
-        b.get("text", "") for b in blocks if isinstance(b, dict) and b.get("type") == "text"
+        b.get("text", "")
+        for b in last_blocks
+        if isinstance(b, dict) and b.get("type") == "text"
     ).strip()
 
 
