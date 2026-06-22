@@ -28,6 +28,7 @@ Menu items:
 | `Recording method` | `Push-to-talk (Right Option)` — the only method currently |
 | `Voice` | One of 8 Kokoro voices; persisted |
 | `Live typing` | Toggles streaming commits; persisted |
+| `Mute summaries` | Silences spoken Claude Code summaries (the spool path); ⌃⌥S speak-selection still works. Persisted |
 | `Quit` | Stops hotkey listeners and exits |
 
 ## Configuration file
@@ -39,6 +40,7 @@ defaults at startup.
 |---|---|---|---|
 | `voice` | string | `"af_heart"` | Kokoro voice for TTS |
 | `live_typing` | bool | `true` | Type confirmed words during dictation |
+| `mute_summaries` | bool | `false` | Suppress spoken Claude Code summaries (spool path) |
 
 ## Models
 

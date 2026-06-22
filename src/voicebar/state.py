@@ -7,7 +7,7 @@ CONFIG_DIR = Path.home() / ".config" / "codewithvoice"
 LEGACY_CONFIG_DIR = Path.home() / ".config" / "gemma-voicebar"
 CONFIG_PATH = CONFIG_DIR / "config.json"
 
-DEFAULT_CONFIG = {"voice": "af_heart", "live_typing": True}
+DEFAULT_CONFIG = {"voice": "af_heart", "live_typing": True, "mute_summaries": False}
 
 
 def load_config() -> dict:

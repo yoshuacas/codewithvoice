@@ -111,10 +111,18 @@ class VoiceBarApp(rumps.App):
         )
         self.live_typing_item.state = 1 if self.config.get("live_typing", True) else 0
 
+        self.mute_summaries_item = rumps.MenuItem(
+            "Mute summaries", callback=self._on_mute_summaries_toggle
+        )
+        self.mute_summaries_item.state = (
+            1 if self.config.get("mute_summaries", False) else 0
+        )
+
         self.menu = [
             self.status_item,
             self.voice_menu,
             self.live_typing_item,
+            self.mute_summaries_item,
             None,
             rumps.MenuItem("Quit", callback=self._on_quit),
         ]
@@ -122,6 +130,11 @@ class VoiceBarApp(rumps.App):
     def _on_live_typing_toggle(self, sender: rumps.MenuItem) -> None:
         sender.state = 0 if sender.state else 1
         self.config["live_typing"] = bool(sender.state)
+        save_config(self.config)
+
+    def _on_mute_summaries_toggle(self, sender: rumps.MenuItem) -> None:
+        sender.state = 0 if sender.state else 1
+        self.config["mute_summaries"] = bool(sender.state)
         save_config(self.config)
 
     def _on_voice_pick(self, sender: rumps.MenuItem) -> None:
@@ -257,7 +270,14 @@ class VoiceBarApp(rumps.App):
         threading.Thread(target=self._tts_and_play, args=(text,), daemon=True).start()
 
     def _on_spool_text(self, text: str) -> None:
-        """Speak text dropped into the spool dir (runs on the watcher thread)."""
+        """Speak text dropped into the spool dir (runs on the watcher thread).
+
+        Muting drops the request rather than queueing it: the watcher has
+        already consumed the file, and a backlog of stale summaries playing
+        on unmute is worse than silence.
+        """
+        if self.config.get("mute_summaries", False):
+            return
         text = clean_for_speech(text)
         if not text:
             return
