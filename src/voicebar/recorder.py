@@ -9,7 +9,11 @@ import soundfile as sf
 
 SAMPLE_RATE = 16000
 CHANNELS = 1
-MAX_SECONDS = 29.5
+# No hard recording cap by default: record until PTT is released. Set a float
+# to re-arm an auto-stop timer (sets `clipped`). Each live streaming pass
+# re-transcribes the whole buffer, so long clips trade snappier live typing
+# for completeness — see streaming.py.
+MAX_SECONDS: float | None = None
 
 
 class Recorder:
@@ -17,7 +21,7 @@ class Recorder:
         self,
         samplerate: int = SAMPLE_RATE,
         channels: int = CHANNELS,
-        max_seconds: float = MAX_SECONDS,
+        max_seconds: float | None = MAX_SECONDS,
     ) -> None:
         self.samplerate = samplerate
         self.channels = channels
@@ -48,13 +52,14 @@ class Recorder:
         )
         self._stream.start()
 
-        def _on_max() -> None:
-            self.clipped = True
-            self.stop_internal()
+        if self.max_seconds is not None:
+            def _on_max() -> None:
+                self.clipped = True
+                self.stop_internal()
 
-        self._timer = threading.Timer(self.max_seconds, _on_max)
-        self._timer.daemon = True
-        self._timer.start()
+            self._timer = threading.Timer(self.max_seconds, _on_max)
+            self._timer.daemon = True
+            self._timer.start()
 
     def stop_internal(self) -> None:
         if self._stream is not None:

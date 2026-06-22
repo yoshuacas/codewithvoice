@@ -4,7 +4,7 @@
 
 | Hotkey | Action |
 |---|---|
-| **Right Option** (hold) | Push-to-talk. Records while held; auto-stops at 29.5 s. With live typing on, confirmed words are typed during the hold; the remainder is typed on release. With live typing off, the full transcript is pasted on release. |
+| **Right Option** (hold) | Push-to-talk. Records for as long as it is held (no time limit). With live typing on, confirmed words are typed during the hold; the remainder is typed on release. With live typing off, the full transcript is pasted on release. |
 | **⌃⌥S** | Speak the current selection through Kokoro. With no selection, re-speaks the last injected dictation. |
 
 ## Menu bar
@@ -48,7 +48,8 @@ defaults at startup.
 | TTS | `hexgrad/Kokoro-82M` | ~330 MB | Hugging Face, downloaded on first run |
 
 Constants: audio is captured at 16 kHz mono (`recorder.py`), TTS output is
-24 kHz (`engine/tts.py`), recordings cap at 29.5 s (`recorder.py:MAX_SECONDS`).
+24 kHz (`engine/tts.py`), and recording is uncapped by default
+(`recorder.py:MAX_SECONDS = None`; set a float to re-arm an auto-stop timer).
 
 ## Module map
 
@@ -60,7 +61,7 @@ All app code lives in `src/voicebar/`:
 | `engine/asr.py` | whisper transcription + hallucinated-segment filter |
 | `engine/tts.py` | Kokoro synthesis |
 | `streaming.py` | `StreamingTranscriber` — LocalAgreement-2 live commits |
-| `recorder.py` | `sounddevice` mic capture, 30 s cap, live `snapshot()` |
+| `recorder.py` | `sounddevice` mic capture, uncapped by default, live `snapshot()` |
 | `hotkeys.py` | `pynput` listeners: Right Option PTT, ⌃⌥S |
 | `inject.py` | `inject_text()` paste path, `type_text()` keystroke path |
 | `selection.py` | `grab_selection()` — synthesized ⌘C with clipboard restore |
