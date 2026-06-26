@@ -23,9 +23,13 @@ class Recorder:
         channels: int = CHANNELS,
         max_seconds: float | None = MAX_SECONDS,
     ) -> None:
+        # `samplerate` is the *output* rate every consumer sees. The mic may be
+        # opened at a different native rate (see start()); reads downsample to
+        # this on the way out.
         self.samplerate = samplerate
         self.channels = channels
         self.max_seconds = max_seconds
+        self._capture_rate = samplerate
         self._stream: sd.InputStream | None = None
         self._frames: list[np.ndarray] = []
         self._lock = threading.Lock()
@@ -39,18 +43,42 @@ class Recorder:
         with self._lock:
             self._frames.append(indata.copy())
 
+    def _open_stream(self, samplerate: int) -> sd.InputStream:
+        stream = sd.InputStream(
+            samplerate=samplerate,
+            channels=self.channels,
+            dtype="float32",
+            callback=self._callback,
+        )
+        stream.start()
+        return stream
+
     def start(self) -> None:
         with self._lock:
             self._frames.clear()
         self.clipped = False
         self.error = None
-        self._stream = sd.InputStream(
-            samplerate=self.samplerate,
-            channels=self.channels,
-            dtype="float32",
-            callback=self._callback,
-        )
-        self._stream.start()
+        # Many USB/conferencing mics (e.g. Anker PowerConf) reject opening at an
+        # arbitrary rate like 16 kHz with CoreAudio error -10851 and capture
+        # nothing. Fall back to the device's native rate and resample to our
+        # target on read rather than asking the hardware to convert.
+        self._capture_rate = self.samplerate
+        try:
+            self._stream = self._open_stream(self.samplerate)
+        except Exception as e:  # noqa: BLE001
+            try:
+                native = int(sd.query_devices(kind="input")["default_samplerate"])
+            except Exception:  # noqa: BLE001
+                raise e  # nothing better to try; surface the original failure
+            if native == self.samplerate:
+                raise
+            print(
+                f"[recorder] {self.samplerate} Hz rejected ({e}); "
+                f"capturing at native {native} Hz and resampling",
+                flush=True,
+            )
+            self._capture_rate = native
+            self._stream = self._open_stream(native)
 
         if self.max_seconds is not None:
             def _on_max() -> None:
@@ -70,6 +98,19 @@ class Recorder:
                 pass
             self._stream = None
 
+    def _to_output(self, samples: np.ndarray) -> np.ndarray:
+        """Mono float32 at the output samplerate, resampling if the mic was
+        opened at a different native rate."""
+        if samples.ndim > 1:
+            samples = samples.squeeze(-1)
+        if self._capture_rate != self.samplerate and len(samples):
+            import scipy.signal as ss
+
+            samples = ss.resample_poly(
+                samples, self.samplerate, self._capture_rate
+            ).astype(np.float32)
+        return samples
+
     def stop(self) -> bytes:
         if self._timer is not None:
             self._timer.cancel()
@@ -79,8 +120,7 @@ class Recorder:
             if not self._frames:
                 return b""
             samples = np.concatenate(self._frames, axis=0)
-        if samples.ndim > 1:
-            samples = samples.squeeze(-1)
+        samples = self._to_output(samples)
         buf = io.BytesIO()
         sf.write(buf, samples, self.samplerate, format="WAV", subtype="PCM_16")
         return buf.getvalue()
@@ -91,9 +131,7 @@ class Recorder:
             if not self._frames:
                 return np.zeros(0, dtype=np.float32)
             samples = np.concatenate(self._frames, axis=0)
-        if samples.ndim > 1:
-            samples = samples.squeeze(-1)
-        return samples
+        return self._to_output(samples)
 
     def drain_new(self) -> np.ndarray:
         """Pop and return frames captured since the last drain (mono float32).
@@ -109,9 +147,7 @@ class Recorder:
                 return np.zeros(0, dtype=np.float32)
             frames, self._frames = self._frames, []
         samples = np.concatenate(frames, axis=0)
-        if samples.ndim > 1:
-            samples = samples.squeeze(-1)
-        return samples
+        return self._to_output(samples)
 
     @property
     def is_recording(self) -> bool:

@@ -50,9 +50,14 @@ defaults at startup.
 | ASR | `mlx-community/whisper-small-mlx-q4` | ~500 MB | Hugging Face, downloaded on first run |
 | TTS | `hexgrad/Kokoro-82M` | ~330 MB | Hugging Face, downloaded on first run |
 
-Constants: audio is captured at 16 kHz mono (`recorder.py`), TTS output is
+Constants: audio is delivered at 16 kHz mono (`recorder.py`), TTS output is
 24 kHz (`engine/tts.py`), and recording is uncapped by default
 (`recorder.py:MAX_SECONDS = None`; set a float to re-arm an auto-stop timer).
+
+Some USB/conferencing mics (e.g. Anker PowerConf) reject opening at 16 kHz
+with CoreAudio error `-10851` and capture silence. `Recorder` detects the
+failed open, falls back to the device's native rate (often 48 kHz), and
+resamples to 16 kHz on read — so every consumer still sees 16 kHz mono.
 
 ## Module map
 
