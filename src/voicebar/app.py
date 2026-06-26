@@ -9,6 +9,7 @@ from PyObjCTools import AppHelper
 from .engine import asr, tts
 from .hotkeys import HotkeyManager
 from .inject import inject_text, type_text
+from .interview import InterviewSession
 from .playback import play_async
 from .recorder import Recorder
 from .selection import grab_selection
@@ -31,6 +32,7 @@ VOICES = [
 
 ICON_IDLE = "●"
 ICON_REC = "🔴"
+ICON_INTERVIEW = "🎙"
 ICON_BUSY = "⏳"
 ICON_OK = "✓"
 ICON_WARN = "⚠"
@@ -57,6 +59,7 @@ class VoiceBarApp(rumps.App):
         self.recorder = Recorder()
         self._engine_lock = threading.Lock()
         self._streamer: StreamingTranscriber | None = None
+        self._interview: InterviewSession | None = None
         self._engines_ready = False
         self._load_seconds = 0.0
         self._hotkeys = HotkeyManager(
@@ -118,8 +121,13 @@ class VoiceBarApp(rumps.App):
             1 if self.config.get("mute_summaries", False) else 0
         )
 
+        self.interview_item = rumps.MenuItem(
+            "Start interview recording", callback=self._on_interview_toggle
+        )
+
         self.menu = [
             self.status_item,
+            self.interview_item,
             self.voice_menu,
             self.live_typing_item,
             self.mute_summaries_item,
@@ -137,6 +145,60 @@ class VoiceBarApp(rumps.App):
         self.config["mute_summaries"] = bool(sender.state)
         save_config(self.config)
 
+    def _on_interview_toggle(self, sender: rumps.MenuItem) -> None:
+        if self._interview is not None:
+            self._stop_interview()
+            return
+        if not self._engines_ready:
+            self._not_ready_notice()
+            return
+        if self.recorder.is_recording:
+            _notify("Busy", "Finish the current dictation before recording an interview.")
+            return
+        session = InterviewSession(self._engine_lock, on_progress=self._on_interview_progress)
+        try:
+            path = session.start()
+        except Exception as e:  # noqa: BLE001
+            _notify(
+                "Microphone error",
+                f"{e}. Grant Microphone permission in System Settings.",
+            )
+            self._set_title(ICON_WARN)
+            return
+        self._interview = session
+        sender.title = "Stop interview recording"
+        self._set_title(ICON_INTERVIEW)
+        self.status_item.title = "Interview: recording…"
+        _notify("Interview recording", f"Saving to {path.name}")
+
+    def _stop_interview(self) -> None:
+        session, self._interview = self._interview, None
+        self.interview_item.title = "Start interview recording"
+        if session is None:
+            return
+        self._set_title(ICON_BUSY)
+        self.status_item.title = "Interview: finishing transcription…"
+
+        def _finish() -> None:
+            try:
+                path = session.stop()
+            except Exception as e:  # noqa: BLE001
+                self._warn("Interview save failed", str(e))
+                return
+            AppHelper.callAfter(self._on_interview_saved, path)
+
+        threading.Thread(target=_finish, daemon=True).start()
+
+    def _on_interview_progress(self, status: str) -> None:
+        # Runs on the session worker thread; touch the menu on the main thread.
+        AppHelper.callAfter(setattr, self.status_item, "title", f"Interview: {status}")
+
+    def _on_interview_saved(self, path) -> None:
+        self.status_item.title = f"Status: ready ({self._load_seconds:.0f}s load)"
+        self._flash_title(ICON_OK)
+        if path is not None:
+            _notify("Interview saved", str(path))
+
     def _on_voice_pick(self, sender: rumps.MenuItem) -> None:
         for v in VOICES:
             self.voice_menu[v].state = 0
@@ -145,6 +207,12 @@ class VoiceBarApp(rumps.App):
         save_config(self.config)
 
     def _on_quit(self, _sender) -> None:
+        if self._interview is not None:
+            try:
+                self._interview.stop()  # flush + close the .wav/.txt cleanly
+            except Exception as e:  # noqa: BLE001
+                print(f"[quit] interview stop failed: {e}", flush=True)
+            self._interview = None
         self._hotkeys.stop()
         self._spool.stop()
         rumps.quit_application()
@@ -173,6 +241,8 @@ class VoiceBarApp(rumps.App):
         if not self._engines_ready:
             self._not_ready_notice()
             return
+        if self._interview is not None:
+            return  # interview owns the mic; ignore PTT until it stops
         if self.recorder.is_recording:
             return
         try:

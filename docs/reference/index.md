@@ -15,8 +15,9 @@ Title characters:
 |---|---|
 | `⏳` | Loading models (startup) or transcribing |
 | `●` | Idle, ready |
-| `🔴` | Recording |
-| `✓` | Injected successfully (flashes briefly) |
+| `🔴` | Recording (push-to-talk) |
+| `🎙` | Recording an interview (hands-free, long-form) |
+| `✓` | Injected/saved successfully (flashes briefly) |
 | `∅` | Transcript came back empty (flashes briefly) |
 | `⚠` | Error — permission missing or engine failure |
 
@@ -24,8 +25,8 @@ Menu items:
 
 | Item | Behavior |
 |---|---|
-| `Status: …` | `loading models…` → `ready (Ns load)` / `load failed` |
-| `Recording method` | `Push-to-talk (Right Option)` — the only method currently |
+| `Status: …` | `loading models…` → `ready (Ns load)` / `load failed`; shows elapsed time + word count while an interview records |
+| `Start/Stop interview recording` | Toggles hands-free long-form recording to a saved transcript (no typing into apps); see the [guide](../guide/record-interviews.md) |
 | `Voice` | One of 8 Kokoro voices; persisted |
 | `Live typing` | Toggles streaming commits; persisted |
 | `Mute summaries` | Silences spoken Claude Code summaries (the spool path); ⌃⌥S speak-selection still works. Persisted |
@@ -63,7 +64,8 @@ All app code lives in `src/voicebar/`:
 | `engine/asr.py` | whisper transcription + hallucinated-segment filter |
 | `engine/tts.py` | Kokoro synthesis |
 | `streaming.py` | `StreamingTranscriber` — LocalAgreement-2 live commits |
-| `recorder.py` | `sounddevice` mic capture, uncapped by default, live `snapshot()` |
+| `interview.py` | `InterviewSession` — hands-free long-form recording to a saved `.txt`/`.wav` |
+| `recorder.py` | `sounddevice` mic capture, uncapped by default, live `snapshot()` / `drain_new()` |
 | `hotkeys.py` | `pynput` listeners: Right Option PTT, ⌃⌥S |
 | `inject.py` | `inject_text()` paste path, `type_text()` keystroke path |
 | `selection.py` | `grab_selection()` — synthesized ⌘C with clipboard restore |
@@ -78,8 +80,26 @@ All app code lives in `src/voicebar/`:
 `~/.local/state/codewithvoice/speak/` — drop a UTF-8 `.txt` file here and a
 running bar app speaks it (write to a dotfile first, then rename, for
 atomicity — or just use `codewithvoice-speak`). Watched every 0.5 s once
-models are loaded. `hooks/speak-summary.py` is a Claude Code Stop hook that
-feeds this; see the [guide](../guide/claude-code-voice.md).
+models are loaded. Requests older than 30 s (`spool.py:MAX_AGE_SECONDS`) are
+discarded unheard — so a backlog that piled up while the app was closed is
+drained silently on launch rather than spoken in a flood, and summaries that
+arrive faster than they can be spoken don't queue up. `hooks/speak-summary.py`
+is a Claude Code Stop hook that feeds this; see the
+[guide](../guide/claude-code-voice.md).
+
+## Interview transcripts
+
+`~/Documents/codewithvoice-interviews/` — each session writes a pair named
+`interview_YYYY-MM-DD_HH-MM-SS`:
+
+- `…​.txt` — the transcript, one timestamped line per ~30 s window
+  (`[m:ss] text`), appended live as the interview runs.
+- `…​.wav` — the raw 16 kHz mono audio, flushed continuously so it survives a
+  crash or quit even if transcription is incomplete.
+
+Audio is transcribed in `CHUNK_SECONDS` (30 s) windows rather than one final
+pass, so memory stays flat regardless of interview length. Near-silent windows
+are skipped to avoid hallucinated text over a candidate's thinking pauses.
 
 ## Commands
 

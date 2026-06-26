@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import threading
+import time
 import uuid
 from pathlib import Path
 from typing import Callable
@@ -9,6 +10,14 @@ from typing import Callable
 # files here; the bar app watches and speaks them. File-based on purpose:
 # no daemon, no socket, and writers need zero dependencies.
 SPOOL_DIR = Path.home() / ".local" / "state" / "codewithvoice" / "speak"
+
+# A summary is only worth speaking while it's still current. Files older than
+# this are discarded unheard. This drains the backlog that piles up while the
+# app is closed (the Stop hook keeps spooling), and stops a runtime flood when
+# summaries arrive faster than they can be spoken — speak the recent one, drop
+# the stale. The window is generous enough to survive one summary's playback
+# plus the post-load first scan, but far below any closed-app gap.
+MAX_AGE_SECONDS = 30.0
 
 
 def submit(text: str) -> Path:
@@ -47,9 +56,16 @@ class SpoolWatcher:
                 continue
             for path in files:
                 try:
+                    age = time.time() - path.stat().st_mtime
                     text = path.read_text(encoding="utf-8")
                     path.unlink()
                 except OSError:
+                    continue
+                # Drop stale requests unheard — a backlog from while the app was
+                # closed, or a flood arriving faster than playback. Consumed
+                # (unlinked) above so it isn't re-seen next scan.
+                if age > MAX_AGE_SECONDS:
+                    print(f"[spool] dropped stale request ({age:.0f}s old)", flush=True)
                     continue
                 if not text.strip():
                     continue

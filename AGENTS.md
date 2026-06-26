@@ -18,7 +18,8 @@ src/voicebar/
 ├── app.py        — rumps app, menu, PTT + speak flows
 ├── engine/       — asr.py (whisper + hallucination filter), tts.py (Kokoro)
 ├── streaming.py  — StreamingTranscriber: LocalAgreement-2 live typing
-├── recorder.py   — mic capture (16 kHz mono, uncapped by default, snapshot())
+├── interview.py  — InterviewSession: hands-free long-form recording → saved .txt/.wav
+├── recorder.py   — mic capture (16 kHz mono, uncapped by default, snapshot()/drain_new())
 ├── hotkeys.py    — pynput: Right Option PTT, ⌃⌥S speak
 ├── inject.py     — inject_text() paste path, type_text() keystroke path
 ├── selection.py  — synthesized ⌘C with clipboard snapshot/restore
@@ -52,6 +53,7 @@ growing slice of decoded sample audio.
 - **ALWAYS** mutate the menu-bar UI on the main thread via `AppHelper.callAfter` (see `_set_title`).
 - **ALWAYS** update the matching page under `docs/` (reference for behavior, guides for workflows) in the same change as a user-visible code change.
 - Recording is **uncapped by default** (`recorder.py:MAX_SECONDS = None`): it records until PTT release. Each live streaming pass re-transcribes from sample 0, so on long clips live typing updates less often (the final full-clip pass stays accurate). If you re-introduce a cap or want snappy live typing on long clips, window the streaming buffer rather than just trimming capture.
+- Interview recording (`interview.py`) is a **separate flow from PTT**: hands-free, types nothing, and streams a `.txt`/`.wav` pair to `~/Documents/codewithvoice-interviews/`. It owns the mic exclusively (PTT/speak are gated off while active) and uses `recorder.drain_new()` for flat-memory chunked capture — never `snapshot()`/`stop()`, which keep cumulative frames. Keep both the `.txt` and `.wav` flushed per chunk so a crash/quit loses nothing; `_on_quit` must `stop()` an active session to close the `.wav`.
 - **DO NOT** add a daemon/socket for external speak requests — the file spool (`spool.py`) is the supported IPC; keep `hooks/speak-summary.py` stdlib-only (it must run outside this venv) and keep spool writes atomic (tmp file, then rename).
 - **DO NOT** add models that won't fit comfortably in RAM next to normal apps; a 10 GB Gemma-as-ASR experiment thrashed 32 GB into 44 GB of swap. Memory-pressure check: if the process RSS ≪ VSZ, the model is paged out — free RAM, don't tune inference.
 - pyobjc packages in `pyproject.toml` are lowercase (`pyobjc-framework-cocoa`); `AppKit` ships inside `pyobjc-framework-cocoa`.
@@ -62,6 +64,11 @@ growing slice of decoded sample audio.
 1. Algorithm lives in `streaming.py` (`HOLDBACK_WORDS`, `MAX_WORD_RUN`, `interval`).
 2. Replicate any reported garbled output as an input-sequence unit case first (feed hypotheses through `_ingest`/`finalize`), then change the algorithm.
 3. Wiring is in `app.py` `_on_ptt_down` / `_asr_and_inject`; the paste fallback path must keep working when nothing was committed.
+
+### Changing interview recording
+1. Session logic lives in `interview.py` (`CHUNK_SECONDS`, `DRAIN_INTERVAL`, `OUTPUT_DIR`).
+2. Test without a mic/model: stub `asr.transcribe_samples`, feed a fake recorder exposing `drain_new()`, and assert the `.txt`/`.wav` pair (final partial chunk must flush on `stop()`).
+3. Wiring is in `app.py` `_on_interview_toggle` / `_stop_interview`; menu/status mutations go through `AppHelper.callAfter`.
 
 ### Swapping the ASR model
 1. Change `MODEL_REPO` in `engine/asr.py` (e.g. `mlx-community/whisper-medium-mlx-q4` for better accuracy at ~1 GB).

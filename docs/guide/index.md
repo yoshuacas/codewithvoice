@@ -11,6 +11,7 @@ Task-focused recipes. If you're new, do the
 ## Daily use
 
 - [How to tune or disable live typing](live-typing.md) — change the commit cadence, or revert to paste-on-release.
+- [How to record an interview to a transcript](record-interviews.md) — hands-free long-form capture saved to a file.
 - [How to change the speaking voice](change-voice.md) — pick among the 8 Kokoro voices.
 - [How to get spoken summaries from Claude Code](claude-code-voice.md) — a Stop hook speaks a one-sentence summary of every turn.
 

@@ -95,6 +95,24 @@ class Recorder:
             samples = samples.squeeze(-1)
         return samples
 
+    def drain_new(self) -> np.ndarray:
+        """Pop and return frames captured since the last drain (mono float32).
+
+        Unlike snapshot()/stop() this *removes* the returned frames, so a
+        long-running consumer can transcribe and persist in chunks while
+        memory stays flat. Do not mix with snapshot()/stop() on the same
+        recorder — draining defeats their cumulative semantics. Returns an
+        empty array when no new audio has arrived.
+        """
+        with self._lock:
+            if not self._frames:
+                return np.zeros(0, dtype=np.float32)
+            frames, self._frames = self._frames, []
+        samples = np.concatenate(frames, axis=0)
+        if samples.ndim > 1:
+            samples = samples.squeeze(-1)
+        return samples
+
     @property
     def is_recording(self) -> bool:
         return self._stream is not None

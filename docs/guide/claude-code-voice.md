@@ -104,3 +104,7 @@ running with `●` in the menu bar.
    spool isn't being read, not that summarization failed.
 4. Test the pipeline directly: `codewithvoice-speak "test"` — if that speaks,
    the bar side is fine and the issue is hook registration.
+5. Requests older than 30 s are dropped unheard (see the spool reference), so a
+   summary spooled while the bar was closed won't play when you launch it
+   later — only summaries from the last few seconds are spoken. This is by
+   design: it stops a backlog from flooding out on startup.

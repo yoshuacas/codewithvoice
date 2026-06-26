@@ -41,6 +41,7 @@ nav:
       - Overview: guide/index.md
       - Fix hotkeys that do nothing: guide/fix-permissions.md
       - Tune or disable live typing: guide/live-typing.md
+      - Record an interview to a transcript: guide/record-interviews.md
       - Change the speaking voice: guide/change-voice.md
       - Spoken summaries from Claude Code: guide/claude-code-voice.md
       - Start at login: guide/start-at-login.md
