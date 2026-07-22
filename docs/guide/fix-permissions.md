@@ -37,6 +37,22 @@ keystrokes, and ⌘⌃⌥C matches no Copy command in most apps (terminals are t
 strictest). If speak-selection still fails somewhere, release the hotkey
 promptly after pressing it, and check the log for `[hotkeys]` errors.
 
+## Startup crash in the keyboard listener (`AXIsProcessTrusted`)
+
+If the log shows a traceback ending in
+
+```
+  File ".../objc/_lazyimport.py", line 359, in get_constant
+    funcmap.pop(name)
+KeyError: 'AXIsProcessTrusted'
+```
+
+the PTT listener thread died at startup, so Right Option does nothing even
+though the models loaded fine. This is a thread-safety race in pyobjc's
+lazy-import machinery when two listeners resolve the same symbol at once.
+codewithvoice pre-resolves it on the main thread before starting the listeners
+(`hotkeys._warm_ax_trust`); if you still see this, relaunch with `make run`.
+
 ## Still stuck
 
 - Check you're testing in a normal text field. Password and other secure fields

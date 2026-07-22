@@ -5,6 +5,24 @@ from typing import Callable
 from pynput import keyboard
 
 
+def _warm_ax_trust() -> None:
+    """Resolve HIServices.AXIsProcessTrusted once, on the calling thread.
+
+    pynput's two listener threads each call AXIsProcessTrusted() on startup.
+    pyobjc-core 12.2's lazy-import machinery is not thread-safe when it first
+    resolves a symbol: the winner does `funcmap.pop(name)` and a racing thread
+    hits `KeyError: 'AXIsProcessTrusted'`, killing that listener (so PTT never
+    fires). Touching it once here caches it in the module dict; every later
+    access is a plain, thread-safe lookup.
+    """
+    try:
+        import HIServices
+
+        HIServices.AXIsProcessTrusted()
+    except Exception as e:  # noqa: BLE001
+        print(f"[hotkeys] AX trust warmup skipped: {e}", flush=True)
+
+
 class HotkeyManager:
     """Two listeners running in background threads:
     1. PTT listener for Right Option (alt_r)
@@ -44,6 +62,7 @@ class HotkeyManager:
                 print(f"[hotkeys] on_ptt_up error: {e}", flush=True)
 
     def start(self) -> None:
+        _warm_ax_trust()
         self._ptt_listener = keyboard.Listener(
             on_press=self._on_press, on_release=self._on_release
         )

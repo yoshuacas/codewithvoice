@@ -1,12 +1,14 @@
-.PHONY: help install run smoke espeak docs
+.PHONY: help install run smoke espeak docs login login-remove
 
 help:
 	@echo "Targets:"
-	@echo "  install   uv sync (creates venv, installs everything)"
-	@echo "  run       Run the menu-bar app in the foreground"
-	@echo "  smoke     In-process ASR + TTS engine smoke test"
-	@echo "  espeak    brew install espeak-ng (Kokoro fallback)"
-	@echo "  docs      Serve the documentation site locally"
+	@echo "  install        uv sync (creates venv, installs everything)"
+	@echo "  run            Run the menu-bar app in the foreground"
+	@echo "  smoke          In-process ASR + TTS engine smoke test"
+	@echo "  espeak         brew install espeak-ng (Kokoro fallback)"
+	@echo "  docs           Serve the documentation site locally"
+	@echo "  login          Register as a macOS Login Item (start at every login)"
+	@echo "  login-remove   Unregister the Login Item"
 
 install:
 	uv sync
@@ -30,3 +32,9 @@ espeak:
 
 docs:
 	uv run --group docs mkdocs serve
+
+login:
+	./scripts/login-item.sh install
+
+login-remove:
+	./scripts/login-item.sh remove

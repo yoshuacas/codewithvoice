@@ -6,23 +6,34 @@ window open.
 There is no code-signed `.app` bundle yet, so the practical option is a small
 launcher script registered as a Login Item.
 
-## 1. Create a launcher
+## Quick start (any time)
+
+From the repo, `./start.sh` (or `make run`) launches the bar. `start.sh`
+resolves the project root from its own location, so it works from anywhere.
+
+## Start at every login (one command)
 
 ```bash
-cat > ~/bin/codewithvoice-launch.command <<'EOF'
-#!/bin/zsh
-cd /path/to/codewithvoice
-exec uv run python -m voicebar
-EOF
-chmod +x ~/bin/codewithvoice-launch.command
+make login          # register the Login Item
+make login-remove   # undo
 ```
 
-Replace `/path/to/codewithvoice` with your clone location.
+This writes a `start.command` launcher in the repo and registers it as a macOS
+Login Item via `scripts/login-item.sh` (idempotent — rerun any time). Check the
+current state with `./scripts/login-item.sh status`.
 
-## 2. Register it
+> A Login Item is used deliberately instead of a `launchd` LaunchAgent: a
+> background daemon was removed from this project on purpose and must not come
+> back.
 
-**System Settings → General → Login Items & Extensions → Open at Login → +** and
-select the `.command` file.
+## Doing it manually instead
+
+The script automates these steps; do them by hand if you prefer:
+
+1. Make a launcher — a `.command` that `cd`s to your clone and runs
+   `uv run python -m voicebar`.
+2. **System Settings → General → Login Items & Extensions → Open at Login → +**
+   and select the `.command` file.
 
 ## Caveat: permissions follow the host app
 
