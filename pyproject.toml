@@ -16,6 +16,7 @@ dependencies = [
     "kokoro>=0.9",
     "pyobjc-framework-cocoa>=12",
     "pyobjc-framework-quartz>=12",
+    "pyobjc-framework-servicemanagement>=12",
 ]
 
 [project.scripts]

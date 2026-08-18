@@ -35,7 +35,26 @@ Anthropic subscription plans), no audio sent anywhere.
 
 ## Quickstart
 
-Requires Apple Silicon, macOS 14+, [Homebrew](https://brew.sh), and [uv](https://docs.astral.sh/uv/).
+Requires Apple Silicon and macOS 14+.
+
+1. Download `CodeWithVoice-<version>.dmg` from the
+   [latest release](https://github.com/yoshuacas/codewithvoice/releases) and
+   drag **CodeWithVoice** to Applications.
+2. First open (releases aren't notarized yet): on Sequoia, double-click, then
+   **System Settings → Privacy & Security → Open Anyway**; on Sonoma,
+   right-click → **Open**.
+3. Wait for the model download (~850 MB, first run only): ⏳ → ●.
+4. Grant **Microphone**, **Accessibility**, and **Input Monitoring** to
+   CodeWithVoice when prompted, relaunch, then hold **Right Option** in any
+   text field and speak.
+5. Menu bar → **Start at Login** to have it at every reboot.
+
+Full walkthrough:
+[Getting started](https://yoshuacas.github.io/codewithvoice/tutorials/getting-started/).
+
+### Developing
+
+With [Homebrew](https://brew.sh) and [uv](https://docs.astral.sh/uv/):
 
 ```bash
 git clone https://github.com/yoshuacas/codewithvoice.git
@@ -43,12 +62,8 @@ cd codewithvoice
 make install
 make espeak    # Kokoro fallback for uncommon words
 make run       # first run downloads models (~850 MB), then ⏳ → ●
+make app       # build dist/CodeWithVoice.app; make dmg packages it
 ```
-
-Grant **Microphone**, **Accessibility**, and **Input Monitoring** to your
-terminal app when prompted, relaunch, then hold **Right Option** in any text
-field and speak. Full walkthrough:
-[Getting started](https://yoshuacas.github.io/codewithvoice/tutorials/getting-started/).
 
 For the full voice loop with Claude Code — dictate your prompt, hear a spoken
 summary of each response — add the
@@ -73,7 +88,8 @@ serves it locally). AI coding agents: start at [AGENTS.md](./AGENTS.md).
 src/voicebar/     — the app (engine/, streaming.py, recorder, hotkeys, inject…)
 docs/             — documentation site source (MkDocs Material)
 samples/          — sample audio used by `make smoke`
-Makefile          — install / run / smoke / espeak / docs
+scripts/          — build-app.sh / build-dmg.sh (release), login-item.sh (source)
+Makefile          — install / run / smoke / espeak / docs / app / dmg
 ```
 
 ## License

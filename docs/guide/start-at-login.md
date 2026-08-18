@@ -3,15 +3,21 @@
 **Goal:** have the bar running after every reboot without keeping a terminal
 window open.
 
-There is no code-signed `.app` bundle yet, so the practical option is a small
-launcher script registered as a Login Item.
+## Installed app (recommended)
 
-## Quick start (any time)
+If you installed **CodeWithVoice.app** (from the DMG), click the menu-bar
+icon → **Start at Login**. That's it — the app registers itself under
+**System Settings → General → Login Items & Extensions** via Apple's
+`SMAppService` API, and the same menu item unchecks to remove it.
 
-From the repo, `./start.sh` (or `make run`) launches the bar. `start.sh`
-resolves the project root from its own location, so it works from anywhere.
+> A Login Item is used deliberately instead of a `launchd` LaunchAgent: a
+> background daemon was removed from this project on purpose and must not come
+> back.
 
-## Start at every login (one command)
+## Running from a source checkout
+
+The **Start at Login** menu item only appears in the bundled app (macOS needs
+an `.app` to register). From a clone, use the Login Item script instead:
 
 ```bash
 make login          # register the Login Item
@@ -22,25 +28,13 @@ This writes a `start.command` launcher in the repo and registers it as a macOS
 Login Item via `scripts/login-item.sh` (idempotent — rerun any time). Check the
 current state with `./scripts/login-item.sh status`.
 
-> A Login Item is used deliberately instead of a `launchd` LaunchAgent: a
-> background daemon was removed from this project on purpose and must not come
-> back.
+For a one-off launch, `./start.sh` (or `make run`) starts the bar from
+anywhere.
 
-## Doing it manually instead
-
-The script automates these steps; do them by hand if you prefer:
-
-1. Make a launcher — a `.command` that `cd`s to your clone and runs
-   `uv run python -m voicebar`.
-2. **System Settings → General → Login Items & Extensions → Open at Login → +**
-   and select the `.command` file.
-
-## Caveat: permissions follow the host app
+### Caveat: source-checkout permissions follow the host app
 
 `.command` files open in Terminal, so the Microphone / Accessibility /
 Input Monitoring grants must be on **Terminal** (see
 [How to fix hotkeys that do nothing](fix-permissions.md)). If you normally run
-from iTerm, you'll be granting a second set for Terminal.
-
-A proper code-signed `.app` bundle — which would own its permissions and skip
-the terminal entirely — is on the roadmap but not built yet.
+from iTerm, you'll be granting a second set for Terminal. The installed .app
+does not have this problem — it owns its permissions.

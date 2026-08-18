@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import threading
 import time
+from pathlib import Path
 
 import rumps
 from PyObjCTools import AppHelper
 
+from . import bundle, login_item
 from .engine import asr, tts
 from .hotkeys import HotkeyManager
 from .inject import inject_text, type_text
@@ -37,6 +39,15 @@ ICON_BUSY = "⏳"
 ICON_OK = "✓"
 ICON_WARN = "⚠"
 ICON_EMPTY = "∅"
+
+
+def _models_cached() -> bool:
+    """Best-effort check whether the speech models are already downloaded."""
+    hub = Path.home() / ".cache" / "huggingface" / "hub"
+    return all(
+        (hub / f"models--{repo.replace('/', '--')}").exists()
+        for repo in (asr.MODEL_REPO, tts.MODEL_REPO)
+    )
 
 
 def _notify(title: str, message: str) -> None:
@@ -76,6 +87,18 @@ class VoiceBarApp(rumps.App):
 
     def _load_engines(self) -> None:
         t0 = time.time()
+        if not _models_cached():
+            _notify(
+                "First run",
+                "Downloading speech models (~850 MB). "
+                "The menu bar shows ⏳ until ready.",
+            )
+            AppHelper.callAfter(
+                setattr,
+                self.status_item,
+                "title",
+                "Status: downloading models (first run)…",
+            )
         try:
             asr.warmup()
             tts.warmup(self.config.get("voice", DEFAULT_VOICE))
@@ -125,12 +148,23 @@ class VoiceBarApp(rumps.App):
             "Start interview recording", callback=self._on_interview_toggle
         )
 
+        extras = []
+        if bundle.is_bundled():
+            # Only the .app can register itself as a login item (SMAppService
+            # needs a main bundle); from a source checkout use `make login`.
+            self.login_item_item = rumps.MenuItem(
+                "Start at Login", callback=self._on_login_item_toggle
+            )
+            self.login_item_item.state = 1 if login_item.is_enabled() else 0
+            extras.append(self.login_item_item)
+
         self.menu = [
             self.status_item,
             self.interview_item,
             self.voice_menu,
             self.live_typing_item,
             self.mute_summaries_item,
+            *extras,
             None,
             rumps.MenuItem("Quit", callback=self._on_quit),
         ]
@@ -144,6 +178,14 @@ class VoiceBarApp(rumps.App):
         sender.state = 0 if sender.state else 1
         self.config["mute_summaries"] = bool(sender.state)
         save_config(self.config)
+
+    def _on_login_item_toggle(self, sender: rumps.MenuItem) -> None:
+        want = not sender.state
+        err = login_item.set_enabled(want)
+        if err is not None:
+            _notify("Start at Login failed", err)
+            return
+        sender.state = 1 if want else 0
 
     def _on_interview_toggle(self, sender: rumps.MenuItem) -> None:
         if self._interview is not None:

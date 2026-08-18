@@ -38,6 +38,8 @@ make install   # uv sync
 make run       # run the app (menu bar shows ⏳ then ●)
 make smoke     # in-process ASR + TTS engine test (no desktop session needed)
 make docs      # serve the docs site locally
+make app       # build dist/CodeWithVoice.app (self-contained, ad-hoc signed)
+make dmg       # package the app into dist/CodeWithVoice-<version>.dmg
 ```
 
 There is no test suite or linter configured (`uvx ruff check src/` passes; keep
@@ -80,8 +82,41 @@ growing slice of decoded sample audio.
 2. TextEdit → hold Right Option, speak ≥6 s, release: words appear during speech (bursts), tail on release, `✓` flash.
 3. Select text → ⌃⌥S speaks it. Clipboard contents must survive both flows.
 
+## Distribution build (.app + DMG)
+
+`scripts/build-app.sh` builds `dist/CodeWithVoice.app` with **no freezer**:
+a python-build-standalone CPython in `Contents/Resources/python/` plus the
+locked dependency set `uv pip install`-ed into its real site-packages (not a
+venv — venvs embed absolute paths and don't relocate). Rules that keep it
+working:
+
+- The launcher (`scripts/launcher.c`) **must stay a compiled Mach-O binary
+  that embeds python via `dlopen(libpython)`** — never a shell stub that
+  `exec()`s python. After an `exec`, the process's code identity is
+  `python3.12` (ad-hoc, per-binary), which no longer matches the app record
+  LaunchServices launched: the WindowServer then never attaches the
+  scene-based `NSStatusItem` (no menu-bar icon, item floats off-screen) and
+  TCC can't attribute the mic request to the bundle (silent denial, no
+  prompt). Terminal launches mask the bug — only Finder/`open` launches hit
+  it. The launcher forwards argv when invoked with arguments because
+  multiprocessing re-invokes `sys.executable -c …` for its spawn helpers.
+- The launcher and all bundled bin scripts run python with `-B`
+  (`PYTHONDONTWRITEBYTECODE`): writing `.pyc` inside the bundle breaks the
+  codesign resource seal on first launch.
+- `en_core_web_sm` is pre-installed at build time — misaki (kokoro's G2P)
+  otherwise runs `pip install` at runtime, which fails inside the bundle.
+- Builds are ad-hoc signed (`SIGN_IDENTITY` env var overrides); the Developer
+  ID signing/notarization seam is marked in the script.
+- **Start at Login** in the bundled app uses `SMAppService`
+  (`src/voicebar/login_item.py`) — this is a sanctioned Login Item, not the
+  banned launchd-daemon topology. The menu item only appears when
+  `bundle.is_bundled()`; source checkouts keep using `make login`.
+
 ## Permissions gotcha
 
-Microphone, Accessibility, and Input Monitoring grants attach to the *terminal
-app* that launched the bar. Hotkey listeners read grants at startup — relaunch
-after granting. Secure fields reject synthesized input by design.
+Microphone, Accessibility, and Input Monitoring grants attach to the *host
+app*: **CodeWithVoice.app** itself when running the bundle, or the *terminal
+app* that launched the bar when running from source. Ad-hoc signed builds get
+a new TCC identity on every rebuild — re-grant after rebuilding the app.
+Hotkey listeners read grants at startup — relaunch after granting. Secure
+fields reject synthesized input by design.

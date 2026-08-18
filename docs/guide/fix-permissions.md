@@ -3,17 +3,23 @@
 **Goal:** Right Option or ⌃⌥S is pressed and nothing happens — no recording
 indicator, no notification.
 
-**You'll need:** to know which terminal app you launch codewithvoice from.
+**You'll need:** to know which app owns the grants — **CodeWithVoice** itself
+if you installed the .app, or your terminal app if you run from a source
+checkout.
 
-macOS attributes permissions to the *host application* of the process. When you
-launch from Terminal, the grants live on Terminal — not on Python or the bar app.
-If you switch terminals (say, Terminal → iTerm), you must grant everything again
-for the new app.
+macOS attributes permissions to the *host application* of the process. The
+installed **CodeWithVoice.app** owns its grants directly. When you launch from
+a terminal instead, the grants live on Terminal (or iTerm, …) — not on Python
+or the bar app — and switching terminals means granting everything again.
+
+> **Unsigned builds:** while releases are ad-hoc signed (no Apple Developer
+> ID), macOS treats each update as a new app — expect to re-grant the three
+> permissions after updating CodeWithVoice.app.
 
 ## Checklist
 
-Open **System Settings → Privacy & Security** and verify your terminal app is
-enabled under all three panes:
+Open **System Settings → Privacy & Security** and verify the right app
+(CodeWithVoice, or your terminal) is enabled under all three panes:
 
 | Pane | Symptom when missing |
 |---|---|
@@ -24,7 +30,7 @@ enabled under all three panes:
 ## After changing a grant
 
 1. Quit the app: menu bar `●` → **Quit**.
-2. Relaunch: `make run`.
+2. Relaunch: open CodeWithVoice.app again (or `make run` from a checkout).
 
 Microphone takes effect immediately, but the `pynput` listeners only read
 Input Monitoring and Accessibility state at startup — a relaunch is required.

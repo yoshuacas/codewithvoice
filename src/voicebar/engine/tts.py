@@ -6,6 +6,7 @@ import numpy as np
 import soundfile as sf
 
 TTS_SR = 24000
+MODEL_REPO = "hexgrad/Kokoro-82M"
 
 _pipeline = None
 
@@ -15,7 +16,7 @@ def _get_pipeline():
     if _pipeline is None:
         from kokoro import KPipeline
 
-        _pipeline = KPipeline(lang_code="a", repo_id="hexgrad/Kokoro-82M")
+        _pipeline = KPipeline(lang_code="a", repo_id=MODEL_REPO)
     return _pipeline
 
 
