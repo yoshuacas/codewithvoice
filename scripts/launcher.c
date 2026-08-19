@@ -12,18 +12,81 @@
  * With no arguments, runs `-m voicebar`. With arguments, behaves like the
  * python interpreter itself — multiprocessing re-invokes sys.executable
  * with `-c ...` for its spawn helpers, and that must not relaunch the app.
+ *
+ * Finder/LaunchServices launches attach stdout/stderr to /dev/null, which
+ * makes failures undiagnosable; redirect both to
+ * ~/Library/Logs/CodeWithVoice.log unless a terminal is attached.
  */
 #include <dlfcn.h>
+#include <fcntl.h>
 #include <libgen.h>
 #include <limits.h>
 #include <mach-o/dyld.h>
+#include <pwd.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
+#include <time.h>
+#include <unistd.h>
 
 typedef int (*py_bytes_main_t)(int argc, char **argv);
 
+#define LOG_ROTATE_BYTES (5 * 1024 * 1024)
+
+static void redirect_logs(void) {
+    if (isatty(STDOUT_FILENO) || isatty(STDERR_FILENO)) {
+        return; /* terminal launch: keep output on the console */
+    }
+    const char *home = getenv("HOME");
+    if (home == NULL || home[0] == '\0') {
+        struct passwd *pw = getpwuid(getuid());
+        if (pw == NULL) {
+            return;
+        }
+        home = pw->pw_dir;
+    }
+    char dir[PATH_MAX];
+    snprintf(dir, sizeof(dir), "%s/Library", home);
+    mkdir(dir, 0755); /* usually exists already */
+    snprintf(dir, sizeof(dir), "%s/Library/Logs", home);
+    mkdir(dir, 0755);
+
+    char path[PATH_MAX];
+    snprintf(path, sizeof(path), "%s/CodeWithVoice.log", dir);
+    struct stat st;
+    if (stat(path, &st) == 0 && st.st_size > LOG_ROTATE_BYTES) {
+        char old[PATH_MAX];
+        snprintf(old, sizeof(old), "%s.old", path);
+        rename(path, old);
+    }
+
+    /* dup2, not freopen: freopen destroys the original stream even when the
+     * log file can't be opened, which would silence stderr entirely. */
+    int fd = open(path, O_WRONLY | O_CREAT | O_APPEND, 0644);
+    if (fd < 0) {
+        return;
+    }
+    dup2(fd, STDOUT_FILENO);
+    dup2(fd, STDERR_FILENO);
+    if (fd > STDERR_FILENO) {
+        close(fd);
+    }
+    setvbuf(stdout, NULL, _IOLBF, 0);
+    setvbuf(stderr, NULL, _IONBF, 0);
+
+    /* python block-buffers stdout when it isn't a tty; a crash would then
+     * swallow the log lines leading up to it. */
+    setenv("PYTHONUNBUFFERED", "1", 1);
+
+    time_t now = time(NULL);
+    char ts[32];
+    strftime(ts, sizeof(ts), "%F %T", localtime(&now));
+    fprintf(stderr, "launcher: %s pid %d start\n", ts, getpid());
+}
+
 int main(int argc, char **argv) {
+    redirect_logs();
     char exe[PATH_MAX];
     uint32_t size = sizeof(exe);
     if (_NSGetExecutablePath(exe, &size) != 0) {

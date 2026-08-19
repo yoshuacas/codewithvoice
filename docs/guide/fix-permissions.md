@@ -16,6 +16,31 @@ or the bar app — and switching terminals means granting everything again.
 > ID), macOS treats each update as a new app — expect to re-grant the three
 > permissions after updating CodeWithVoice.app.
 
+## After updating the app: no prompt, grants silently dead
+
+macOS does **not** re-prompt after you replace the .app: the old permission
+entries (bound to the previous build's signature) still exist under the same
+bundle ID, so it silently denies instead of asking. Reset them, then relaunch
+and re-grant:
+
+```bash
+tccutil reset Accessibility io.github.yoshuacas.codewithvoice
+tccutil reset ListenEvent   io.github.yoshuacas.codewithvoice   # Input Monitoring
+tccutil reset Microphone    io.github.yoshuacas.codewithvoice
+```
+
+Missing **Accessibility** is the sneakiest case: hotkeys fire and
+transcription runs (the log shows `[asr]` lines), but the synthesized
+keystrokes are dropped without any error — dictated text simply never
+appears. Accessibility never triggers a prompt on its own; add the app
+manually with **+** in that pane.
+
+To stop re-granting after every rebuild, sign with a stable identity: in
+Keychain Access run **Certificate Assistant → Create a Certificate…**
+(Identity Type *Self-Signed Root*, Certificate Type **Code Signing**), then
+build with `SIGN_IDENTITY="<certname>" make app`. A stable signature keeps
+the grants across rebuilds.
+
 ## Checklist
 
 Open **System Settings → Privacy & Security** and verify the right app
@@ -24,7 +49,7 @@ Open **System Settings → Privacy & Security** and verify the right app
 | Pane | Symptom when missing |
 |---|---|
 | **Input Monitoring** | Hotkeys never fire; nothing happens at all |
-| **Microphone** | Title flips to `⚠` and a "Microphone error" notification appears |
+| **Microphone** | Title sticks at `⚠` and a "Microphone error" notification appears; the `Status:` menu item keeps the error text |
 | **Accessibility** | Transcription works but no text appears (the synthesized ⌘V is blocked); "Paste blocked" notification |
 
 ## After changing a grant
@@ -61,7 +86,11 @@ codewithvoice pre-resolves it on the main thread before starting the listeners
 
 ## Still stuck
 
+- Click the menu bar icon and read the `Status:` item — it keeps the text of
+  the last error (e.g. the exact microphone failure) even if you missed the
+  notification.
 - Check you're testing in a normal text field. Password and other secure fields
   reject synthesized keystrokes by design; the text is left on the clipboard.
-- Run from a foreground terminal and watch the log output: permission errors
-  from the listeners print as `[hotkeys] ...` lines.
+- Read the log: the installed .app writes to `~/Library/Logs/CodeWithVoice.log`;
+  from a source checkout, run in a foreground terminal and watch its output.
+  Permission errors from the listeners print as `[hotkeys] ...` lines.

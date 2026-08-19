@@ -53,6 +53,7 @@ growing slice of decoded sample audio.
 - **NEVER** trust LocalAgreement alone to reject whisper hallucinations — silence loops ("cooling cooling…") are self-consistent across passes. Keep all three guards: segment filter in `engine/asr.py`, `MAX_WORD_RUN` in `streaming.py`, RMS silence skip in the worker loop.
 - **ALWAYS** hold `app.py`'s `_engine_lock` around any whisper/Kokoro call; the engines are not concurrency-safe under MPS/MLX.
 - **ALWAYS** mutate the menu-bar UI on the main thread via `AppHelper.callAfter` (see `_set_title`).
+- Error surfacing goes through `app.py:_warn` (notification + ⚠ + reason in the `Status:` menu item). Mic-open failures use `sticky=True` (⚠ stays up); the reason persists until `_set_status_ready()` runs on the next successful flow. Don't set `ICON_WARN` directly without also setting a status reason.
 - **ALWAYS** update the matching page under `docs/` (reference for behavior, guides for workflows) in the same change as a user-visible code change.
 - Recording is **uncapped by default** (`recorder.py:MAX_SECONDS = None`): it records until PTT release. Each live streaming pass re-transcribes from sample 0, so on long clips live typing updates less often (the final full-clip pass stays accurate). If you re-introduce a cap or want snappy live typing on long clips, window the streaming buffer rather than just trimming capture.
 - Interview recording (`interview.py`) is a **separate flow from PTT**: hands-free, types nothing, and streams a `.txt`/`.wav` pair to `~/Documents/codewithvoice-interviews/`. It owns the mic exclusively (PTT/speak are gated off while active) and uses `recorder.drain_new()` for flat-memory chunked capture — never `snapshot()`/`stop()`, which keep cumulative frames. Keep both the `.txt` and `.wav` flushed per chunk so a crash/quit loses nothing; `_on_quit` must `stop()` an active session to close the `.wav`.
@@ -103,6 +104,12 @@ working:
 - The launcher and all bundled bin scripts run python with `-B`
   (`PYTHONDONTWRITEBYTECODE`): writing `.pyc` inside the bundle breaks the
   codesign resource seal on first launch.
+- The launcher redirects stdout/stderr to `~/Library/Logs/CodeWithVoice.log`
+  when no tty is attached (Finder launches otherwise pipe them to /dev/null,
+  making failures undiagnosable). It uses `open`+`dup2` — not `freopen`, which
+  destroys the stream even when the open fails — rotates at 5 MB, and sets
+  `PYTHONUNBUFFERED` so a crash doesn't swallow buffered lines. Keep this when
+  touching `scripts/launcher.c`.
 - `en_core_web_sm` is pre-installed at build time — misaki (kokoro's G2P)
   otherwise runs `pip install` at runtime, which fails inside the bundle.
 - Builds are ad-hoc signed (`SIGN_IDENTITY` env var overrides); the Developer
@@ -120,3 +127,20 @@ app* that launched the bar when running from source. Ad-hoc signed builds get
 a new TCC identity on every rebuild — re-grant after rebuilding the app.
 Hotkey listeners read grants at startup — relaunch after granting. Secure
 fields reject synthesized input by design.
+
+After replacing the installed .app, macOS does **not** re-prompt: the stale
+same-bundle-ID TCC entries (bound to the old signature) make it silently deny
+instead. Clear them first, then relaunch and re-grant:
+
+```bash
+tccutil reset Accessibility io.github.yoshuacas.codewithvoice
+tccutil reset ListenEvent   io.github.yoshuacas.codewithvoice   # Input Monitoring
+tccutil reset Microphone    io.github.yoshuacas.codewithvoice
+```
+
+Missing-Accessibility is the sneakiest state: hotkeys and ASR work (log shows
+`[asr]` lines) but synthesized keystrokes/⌘V are dropped with no error — text
+just never appears. pynput's startup line `This process is not trusted!` in
+the log means Input Monitoring/Accessibility is missing. To stop re-granting
+on every rebuild, sign with a stable identity: create a self-signed Code
+Signing cert in Keychain Access, then `SIGN_IDENTITY="<certname>" make app`.

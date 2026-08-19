@@ -50,6 +50,10 @@ def _models_cached() -> bool:
     )
 
 
+def _ellipsize(text: str, limit: int = 100) -> str:
+    return text if len(text) <= limit else text[: limit - 1] + "…"
+
+
 def _notify(title: str, message: str) -> None:
     """Notification that degrades to a log line.
 
@@ -118,7 +122,7 @@ class VoiceBarApp(rumps.App):
 
     def _on_load_failed(self, msg: str) -> None:
         self.title = ICON_WARN
-        self.status_item.title = "Status: load failed"
+        self.status_item.title = f"Status: load failed — {_ellipsize(msg)}"
         _notify("Engines failed to load", msg)
 
     # ---------- menu ----------
@@ -201,11 +205,11 @@ class VoiceBarApp(rumps.App):
         try:
             path = session.start()
         except Exception as e:  # noqa: BLE001
-            _notify(
+            self._warn(
                 "Microphone error",
                 f"{e}. Grant Microphone permission in System Settings.",
+                sticky=True,
             )
-            self._set_title(ICON_WARN)
             return
         self._interview = session
         sender.title = "Stop interview recording"
@@ -268,9 +272,27 @@ class VoiceBarApp(rumps.App):
         self._set_title(transient)
         threading.Timer(after, self._set_title, args=(ICON_IDLE,)).start()
 
-    def _warn(self, title: str, message: str) -> None:
+    def _set_status(self, text: str) -> None:
+        AppHelper.callAfter(setattr, self.status_item, "title", text)
+
+    def _set_status_ready(self) -> None:
+        if self._interview is not None:
+            return  # interview progress owns the status line
+        self._set_status(f"Status: ready ({self._load_seconds:.0f}s load)")
+
+    def _warn(self, title: str, message: str, sticky: bool = False) -> None:
+        """Surface an error: notification + ⚠ + reason in the Status item.
+
+        Sticky warnings (e.g. mic open failures) keep ⚠ up until a later flow
+        succeeds; the Status reason persists either way so the cause is
+        visible from the menu even if the notification was missed.
+        """
         _notify(title, message)
-        self._flash_title(ICON_WARN, after=0.8)
+        self._set_status(f"Status: {title} — {_ellipsize(message)}")
+        if sticky:
+            self._set_title(ICON_WARN)
+        else:
+            self._flash_title(ICON_WARN, after=0.8)
 
     def _not_ready_notice(self) -> None:
         _notify(
@@ -290,12 +312,13 @@ class VoiceBarApp(rumps.App):
         try:
             self.recorder.start()
         except Exception as e:  # noqa: BLE001
-            _notify(
+            self._warn(
                 "Microphone error",
                 f"{e}. Grant Microphone permission in System Settings.",
+                sticky=True,
             )
-            self._set_title(ICON_WARN)
             return
+        self._set_status_ready()  # mic works again: clear any stale warn reason
         if self.config.get("live_typing", True):
             self._streamer = StreamingTranscriber(
                 self.recorder, self._engine_lock, on_delta=self._on_stream_delta
@@ -360,6 +383,7 @@ class VoiceBarApp(rumps.App):
 
         if ok:
             Runtime.last_injected = full_text
+            self._set_status_ready()
             self._flash_title(ICON_OK)
             if clipped:
                 _notify("Clip cut at 30s", "Long dictation truncated.")
@@ -405,6 +429,7 @@ class VoiceBarApp(rumps.App):
         except Exception as e:  # noqa: BLE001
             self._warn("TTS failed", str(e))
             return
+        self._set_status_ready()
         self._set_title(ICON_IDLE)
         play_async(tts.to_wav_bytes(samples, sr))
 

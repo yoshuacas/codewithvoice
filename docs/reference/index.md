@@ -19,13 +19,13 @@ Title characters:
 | `🎙` | Recording an interview (hands-free, long-form) |
 | `✓` | Injected/saved successfully (flashes briefly) |
 | `∅` | Transcript came back empty (flashes briefly) |
-| `⚠` | Error — permission missing or engine failure |
+| `⚠` | Error — permission missing or engine failure. Flashes for transient errors; stays up after a microphone open failure or engine-load failure until a later flow succeeds. The `Status:` menu item shows the reason |
 
 Menu items:
 
 | Item | Behavior |
 |---|---|
-| `Status: …` | `loading models…` → `ready (Ns load)` / `load failed`; shows elapsed time + word count while an interview records |
+| `Status: …` | `loading models…` → `ready (Ns load)` / `load failed — <reason>`; shows elapsed time + word count while an interview records. After any error it keeps `<error> — <reason>` until the next successful dictation/speak clears it |
 | `Start/Stop interview recording` | Toggles hands-free long-form recording to a saved transcript (no typing into apps); see the [guide](../guide/record-interviews.md) |
 | `Voice` | One of 8 Kokoro voices; persisted |
 | `Live typing` | Toggles streaming commits; persisted |
@@ -105,6 +105,15 @@ is a Claude Code Stop hook that feeds this; see the
 Audio is transcribed in `CHUNK_SECONDS` (30 s) windows rather than one final
 pass, so memory stays flat regardless of interview length. Near-silent windows
 are skipped to avoid hallucinated text over a candidate's thinking pauses.
+
+## Logs
+
+Running from a source checkout, log lines go to the launching terminal. The
+installed **CodeWithVoice.app** instead writes stdout/stderr to
+`~/Library/Logs/CodeWithVoice.log` (Finder launches otherwise discard them) —
+check it first when diagnosing a `⚠` or a startup failure. The launcher
+rotates the file to `CodeWithVoice.log.old` when it exceeds 5 MB, and each
+launch appends a `launcher: <timestamp> pid <n> start` marker.
 
 ## Commands
 
