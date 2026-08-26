@@ -331,9 +331,17 @@ class VoiceBarApp(rumps.App):
             print("[stream] live typing blocked (secure field?)", flush=True)
 
     def _on_ptt_up(self) -> None:
+        # Runs on pynput's event-tap thread: do nothing slow here. Stopping
+        # the stream can block (recorder.stop bounds a CoreAudio deadlock at
+        # STOP_TIMEOUT_SECONDS), and a blocked tap callback freezes every
+        # hotkey until it returns.
         if not self.recorder.is_recording and not self.recorder.has_audio:
             return
         streamer, self._streamer = self._streamer, None
+        self._set_title(ICON_BUSY)
+        threading.Thread(target=self._finish_ptt, args=(streamer,), daemon=True).start()
+
+    def _finish_ptt(self, streamer: StreamingTranscriber | None) -> None:
         try:
             wav = self.recorder.stop()
         except Exception as e:  # noqa: BLE001
@@ -349,10 +357,7 @@ class VoiceBarApp(rumps.App):
             self._flash_title(ICON_EMPTY)
             return
 
-        self._set_title(ICON_BUSY)
-        threading.Thread(
-            target=self._asr_and_inject, args=(wav, clipped, streamer), daemon=True
-        ).start()
+        self._asr_and_inject(wav, clipped, streamer)
 
     def _asr_and_inject(
         self, wav: bytes, clipped: bool, streamer: StreamingTranscriber | None

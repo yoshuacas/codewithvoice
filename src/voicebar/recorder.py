@@ -15,6 +15,15 @@ CHANNELS = 1
 # for completeness — see streaming.py.
 MAX_SECONDS: float | None = None
 
+# Bound on how long stopping the input stream may block. PortAudio's
+# Pa_StopStream can deadlock against the CoreAudio HAL IO thread (observed
+# 2026-08-25: AudioOutputUnitStop held the AudioUnit mutex while waiting on
+# the HAL IO mutex, whose owner was inside PortAudio's startStopCallback
+# waiting on the AudioUnit mutex). The captured frames don't depend on the
+# stream closing, so on timeout the stream is abandoned instead of hanging
+# the caller forever.
+STOP_TIMEOUT_SECONDS = 3.0
+
 
 class Recorder:
     def __init__(
@@ -31,26 +40,35 @@ class Recorder:
         self.max_seconds = max_seconds
         self._capture_rate = samplerate
         self._stream: sd.InputStream | None = None
+        self._accept: dict[str, bool] | None = None
         self._frames: list[np.ndarray] = []
         self._lock = threading.Lock()
         self._timer: threading.Timer | None = None
         self.clipped = False
         self.error: str | None = None
 
-    def _callback(self, indata, frames, time_info, status) -> None:
-        if status:
-            self.error = str(status)
-        with self._lock:
-            self._frames.append(indata.copy())
-
     def _open_stream(self, samplerate: int) -> sd.InputStream:
+        # Per-stream accept flag: an abandoned stream (see stop_internal) may
+        # keep firing its callback; the flag stops it from polluting frames
+        # captured by a later stream.
+        accept = {"accept": True}
+
+        def _callback(indata, frames, time_info, status) -> None:
+            if status:
+                self.error = str(status)
+            if not accept["accept"]:
+                return
+            with self._lock:
+                self._frames.append(indata.copy())
+
         stream = sd.InputStream(
             samplerate=samplerate,
             channels=self.channels,
             dtype="float32",
-            callback=self._callback,
+            callback=_callback,
         )
         stream.start()
+        self._accept = accept
         return stream
 
     def start(self) -> None:
@@ -90,13 +108,36 @@ class Recorder:
             self._timer.start()
 
     def stop_internal(self) -> None:
-        if self._stream is not None:
+        """Close the input stream without ever blocking longer than
+        STOP_TIMEOUT_SECONDS; the frames captured so far stay readable either
+        way. See STOP_TIMEOUT_SECONDS for the CoreAudio deadlock this guards
+        against."""
+        stream, self._stream = self._stream, None
+        accept, self._accept = self._accept, None
+        if stream is None:
+            return
+
+        def _close() -> None:
             try:
-                self._stream.stop()
-                self._stream.close()
+                stream.stop()
+                stream.close()
             except Exception:
                 pass
-            self._stream = None
+            finally:
+                if accept is not None:
+                    accept["accept"] = False
+
+        closer = threading.Thread(target=_close, daemon=True)
+        closer.start()
+        closer.join(STOP_TIMEOUT_SECONDS)
+        if closer.is_alive():
+            if accept is not None:
+                accept["accept"] = False  # drop anything the wedged stream still delivers
+            print(
+                "[recorder] stream stop hung (CoreAudio deadlock?); "
+                "abandoning the stream and keeping captured audio",
+                flush=True,
+            )
 
     def _to_output(self, samples: np.ndarray) -> np.ndarray:
         """Mono float32 at the output samplerate, resampling if the mic was

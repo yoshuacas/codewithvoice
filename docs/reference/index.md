@@ -59,6 +59,13 @@ with CoreAudio error `-10851` and capture silence. `Recorder` detects the
 failed open, falls back to the device's native rate (often 48 kHz), and
 resamples to 16 kHz on read — so every consumer still sees 16 kHz mono.
 
+Closing the mic stream is bounded at 3 s (`recorder.py:STOP_TIMEOUT_SECONDS`):
+PortAudio's stop call can deadlock against the CoreAudio HAL IO thread, which
+used to freeze the app at `🔴` on PTT release and kill all hotkeys. If the
+close hangs, the stream is abandoned (the log shows
+`[recorder] stream stop hung`), the audio captured so far is still transcribed
+and typed, and the next dictation opens a fresh stream.
+
 ## Module map
 
 All app code lives in `src/voicebar/`:

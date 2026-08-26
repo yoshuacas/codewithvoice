@@ -98,9 +98,10 @@ class StreamingTranscriber:
             if len(samples) < self._min_samples:
                 continue
             # Re-transcribing without new speech can only hallucinate; skip
-            # the pass if everything since the last one is near-silence.
+            # the pass if nothing arrived since the last one (e.g. the mic
+            # stream died) or everything new is near-silence.
             new = samples[self._transcribed_to:]
-            if len(new) and float(np.sqrt(np.mean(new**2))) < 0.005:
+            if not len(new) or float(np.sqrt(np.mean(new**2))) < 0.005:
                 continue
             self._transcribed_to = len(samples)
             try:
