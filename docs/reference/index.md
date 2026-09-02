@@ -66,6 +66,14 @@ close hangs, the stream is abandoned (the log shows
 `[recorder] stream stop hung`), the audio captured so far is still transcribed
 and typed, and the next dictation opens a fresh stream.
 
+Opening the stream is bounded too, at 5 s (`recorder.py:OPEN_TIMEOUT_SECONDS`):
+an abandoned close can keep holding the CoreAudio HAL mutex, and the next open
+would block on it forever. A hung open surfaces as a sticky `⚠` with
+*"Opening the microphone hung"* in the `Status:` item instead of silently
+freezing — quit and relaunch the app to recover the audio system. Hotkeys keep
+working throughout: the press handler only flips state and hands the mic open
+to a background thread, so a wedged open can no longer freeze the event tap.
+
 ## Module map
 
 All app code lives in `src/voicebar/`:

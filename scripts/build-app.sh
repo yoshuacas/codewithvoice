@@ -16,8 +16,16 @@ APP="$ROOT/dist/CodeWithVoice.app"
 CONTENTS="$APP/Contents"
 RES="$CONTENTS/Resources"
 PYDIST="$ROOT/build/python-dist"
-# "-" = ad-hoc signing. For Developer ID, export e.g.:
+# Signing identity. Precedence: explicit SIGN_IDENTITY env var, else the
+# local self-signed "CodeWithVoice Signing" cert if the keychain has one
+# (stable TCC identity across rebuilds — no permission re-grant dance; see
+# docs/guide/fix-permissions.md), else "-" (ad-hoc). For Developer ID, export:
 #   SIGN_IDENTITY="Developer ID Application: Your Name (TEAMID)"
+LOCAL_CERT="CodeWithVoice Signing"
+if [[ -z "${SIGN_IDENTITY:-}" ]] && \
+   security find-identity -v -p codesigning 2>/dev/null | grep -q "\"$LOCAL_CERT\""; then
+  SIGN_IDENTITY="$LOCAL_CERT"
+fi
 SIGN_IDENTITY="${SIGN_IDENTITY:--}"
 
 echo "==> Building CodeWithVoice.app $VERSION"
@@ -110,6 +118,7 @@ iconutil -c icns "$ICONSET" -o "$RES/AppIcon.icns"
 #   2. ditto -c -k dist/CodeWithVoice.app build/app.zip
 #   3. xcrun notarytool submit build/app.zip --keychain-profile codewithvoice --wait
 #   4. xcrun stapler staple dist/CodeWithVoice.app
+echo "==> Signing as: $SIGN_IDENTITY"
 codesign --force --deep -s "$SIGN_IDENTITY" "$APP"
 codesign --verify --deep "$APP"
 

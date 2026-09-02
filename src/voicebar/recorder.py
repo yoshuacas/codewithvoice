@@ -24,6 +24,18 @@ MAX_SECONDS: float | None = None
 # the caller forever.
 STOP_TIMEOUT_SECONDS = 3.0
 
+# Bound on how long opening the input stream may block. Pa_OpenStream takes
+# the same CoreAudio HAL mutex that an abandoned close (above) can hold
+# forever (observed 2026-09-02: a PTT press after an abandoned stop sat in
+# Pa_OpenStream → HALB_Mutex::Lock and never returned). Opening on a helper
+# thread with a bounded join turns that deadlock into a surfaced error.
+OPEN_TIMEOUT_SECONDS = 5.0
+
+
+class StreamOpenTimeout(RuntimeError):
+    """Opening the mic stream hung — the CoreAudio HAL is likely wedged by an
+    earlier abandoned stream close; only an app restart recovers."""
+
 
 class Recorder:
     def __init__(
@@ -61,15 +73,43 @@ class Recorder:
             with self._lock:
                 self._frames.append(indata.copy())
 
-        stream = sd.InputStream(
-            samplerate=samplerate,
-            channels=self.channels,
-            dtype="float32",
-            callback=_callback,
-        )
-        stream.start()
+        result: dict[str, object] = {}
+
+        def _open() -> None:
+            try:
+                stream = sd.InputStream(
+                    samplerate=samplerate,
+                    channels=self.channels,
+                    dtype="float32",
+                    callback=_callback,
+                )
+                stream.start()
+            except Exception as e:  # noqa: BLE001
+                result["error"] = e
+                return
+            result["stream"] = stream
+            if not accept["accept"]:
+                # The join below already timed out and abandoned this open;
+                # best-effort close so a late success doesn't leak a stream.
+                try:
+                    stream.stop()
+                    stream.close()
+                except Exception as e:  # noqa: BLE001
+                    print(f"[recorder] late stream close failed: {e}", flush=True)
+
+        opener = threading.Thread(target=_open, daemon=True)
+        opener.start()
+        opener.join(OPEN_TIMEOUT_SECONDS)
+        if opener.is_alive():
+            accept["accept"] = False  # a late open must not capture anything
+            raise StreamOpenTimeout(
+                f"Opening the microphone hung for {OPEN_TIMEOUT_SECONDS:.0f}s "
+                "(audio system wedged?) — quit and relaunch the app"
+            )
+        if "error" in result:
+            raise result["error"]
         self._accept = accept
-        return stream
+        return result["stream"]
 
     def start(self) -> None:
         with self._lock:
@@ -83,7 +123,9 @@ class Recorder:
         self._capture_rate = self.samplerate
         try:
             self._stream = self._open_stream(self.samplerate)
-        except Exception as e:  # noqa: BLE001
+        except StreamOpenTimeout:
+            raise  # the HAL is wedged; retrying at another rate would hang too
+        except Exception as e:
             try:
                 native = int(sd.query_devices(kind="input")["default_samplerate"])
             except Exception:  # noqa: BLE001

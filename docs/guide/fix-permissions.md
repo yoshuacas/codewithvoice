@@ -35,11 +35,32 @@ keystrokes are dropped without any error — dictated text simply never
 appears. Accessibility never triggers a prompt on its own; add the app
 manually with **+** in that pane.
 
-To stop re-granting after every rebuild, sign with a stable identity: in
-Keychain Access run **Certificate Assistant → Create a Certificate…**
-(Identity Type *Self-Signed Root*, Certificate Type **Code Signing**), then
-build with `SIGN_IDENTITY="<certname>" make app`. A stable signature keeps
-the grants across rebuilds.
+To stop re-granting after every rebuild, sign with a stable identity. The
+build script looks for a keychain identity named **`CodeWithVoice Signing`**
+and uses it automatically (the `==> Signing as:` build line shows which
+identity was picked); any other name still works via
+`SIGN_IDENTITY="<certname>" make app`. Create the identity either in Keychain
+Access (**Certificate Assistant → Create a Certificate…**, Identity Type
+*Self-Signed Root*, Certificate Type **Code Signing**) or from a terminal:
+
+```bash
+openssl req -x509 -newkey rsa:2048 -keyout key.pem -out cert.pem -days 3650 -nodes \
+  -subj "/CN=CodeWithVoice Signing" \
+  -addext "keyUsage=critical,digitalSignature" \
+  -addext "extendedKeyUsage=critical,codeSigning" \
+  -addext "basicConstraints=critical,CA:false"
+openssl pkcs12 -export -legacy -out cert.p12 -inkey key.pem -in cert.pem \
+  -passout pass:tmpimport -name "CodeWithVoice Signing"   # -legacy: security(1) can't read OpenSSL 3 default PKCS12
+security import cert.p12 -k ~/Library/Keychains/login.keychain-db \
+  -P tmpimport -T /usr/bin/codesign
+security add-trusted-cert -r trustRoot -p codeSign \
+  -k ~/Library/Keychains/login.keychain-db cert.pem     # may prompt for your login password
+rm key.pem cert.pem cert.p12
+```
+
+Approve the keychain prompt on the first `make app` (**Always Allow**). One
+last `tccutil` reset + re-grant is needed when switching an installed ad-hoc
+build to the signed identity; after that, grants survive every rebuild.
 
 ## Checklist
 

@@ -74,6 +74,12 @@ class VoiceBarApp(rumps.App):
         self.recorder = Recorder()
         self._engine_lock = threading.Lock()
         self._streamer: StreamingTranscriber | None = None
+        # PTT state machine: idle → starting → recording → finishing → idle.
+        # The hotkey callbacks only flip these under _ptt_lock and spawn
+        # threads; the lock is never held across blocking work.
+        self._ptt_state = "idle"
+        self._ptt_release_pending = False
+        self._ptt_lock = threading.Lock()
         self._interview: InterviewSession | None = None
         self._engines_ready = False
         self._load_seconds = 0.0
@@ -198,7 +204,9 @@ class VoiceBarApp(rumps.App):
         if not self._engines_ready:
             self._not_ready_notice()
             return
-        if self.recorder.is_recording:
+        with self._ptt_lock:
+            ptt_busy = self._ptt_state != "idle"
+        if ptt_busy or self.recorder.is_recording:
             _notify("Busy", "Finish the current dictation before recording an interview.")
             return
         session = InterviewSession(self._engine_lock, on_progress=self._on_interview_progress)
@@ -302,16 +310,29 @@ class VoiceBarApp(rumps.App):
     # ---------- PTT flow ----------
 
     def _on_ptt_down(self) -> None:
+        # Runs on pynput's event-tap thread: flip state and spawn a thread,
+        # nothing else. Opening the mic can block — Pa_OpenStream takes the
+        # CoreAudio HAL mutex, which an abandoned stream close may hold
+        # (observed 2026-09-02) — and a blocked tap callback freezes every
+        # hotkey until it returns.
         if not self._engines_ready:
             self._not_ready_notice()
             return
         if self._interview is not None:
             return  # interview owns the mic; ignore PTT until it stops
-        if self.recorder.is_recording:
-            return
+        with self._ptt_lock:
+            if self._ptt_state != "idle":
+                return
+            self._ptt_state = "starting"
+            self._ptt_release_pending = False
+        threading.Thread(target=self._begin_ptt, daemon=True).start()
+
+    def _begin_ptt(self) -> None:
         try:
             self.recorder.start()
         except Exception as e:  # noqa: BLE001
+            with self._ptt_lock:
+                self._ptt_state = "idle"
             self._warn(
                 "Microphone error",
                 f"{e}. Grant Microphone permission in System Settings.",
@@ -319,11 +340,28 @@ class VoiceBarApp(rumps.App):
             )
             return
         self._set_status_ready()  # mic works again: clear any stale warn reason
+        streamer = None
         if self.config.get("live_typing", True):
-            self._streamer = StreamingTranscriber(
+            streamer = StreamingTranscriber(
                 self.recorder, self._engine_lock, on_delta=self._on_stream_delta
             )
-            self._streamer.start()
+        with self._ptt_lock:
+            if self._ptt_release_pending:
+                # Key already released while the mic was opening (quick tap):
+                # skip straight to the finish path on this thread.
+                self._ptt_release_pending = False
+                self._ptt_state = "finishing"
+                finish_now = True
+            else:
+                self._ptt_state = "recording"
+                self._streamer = streamer
+                if streamer is not None:
+                    streamer.start()  # just spawns a thread; safe under the lock
+                finish_now = False
+        if finish_now:
+            self._set_title(ICON_BUSY)
+            self._finish_ptt(None)
+            return
         self._set_title(ICON_REC)
 
     def _on_stream_delta(self, text: str) -> None:
@@ -335,29 +373,39 @@ class VoiceBarApp(rumps.App):
         # the stream can block (recorder.stop bounds a CoreAudio deadlock at
         # STOP_TIMEOUT_SECONDS), and a blocked tap callback freezes every
         # hotkey until it returns.
-        if not self.recorder.is_recording and not self.recorder.has_audio:
-            return
-        streamer, self._streamer = self._streamer, None
+        with self._ptt_lock:
+            if self._ptt_state == "starting":
+                # Mic still opening: let _begin_ptt run the finish path.
+                self._ptt_release_pending = True
+                return
+            if self._ptt_state != "recording":
+                return
+            self._ptt_state = "finishing"
+            streamer, self._streamer = self._streamer, None
         self._set_title(ICON_BUSY)
         threading.Thread(target=self._finish_ptt, args=(streamer,), daemon=True).start()
 
     def _finish_ptt(self, streamer: StreamingTranscriber | None) -> None:
         try:
-            wav = self.recorder.stop()
-        except Exception as e:  # noqa: BLE001
-            if streamer:
-                streamer.stop()
-            self._warn("Recording error", str(e))
-            return
+            try:
+                wav = self.recorder.stop()
+            except Exception as e:  # noqa: BLE001
+                if streamer:
+                    streamer.stop()
+                self._warn("Recording error", str(e))
+                return
 
-        clipped = self.recorder.clipped
-        if not wav:
-            if streamer:
-                streamer.stop()
-            self._flash_title(ICON_EMPTY)
-            return
+            clipped = self.recorder.clipped
+            if not wav:
+                if streamer:
+                    streamer.stop()
+                self._flash_title(ICON_EMPTY)
+                return
 
-        self._asr_and_inject(wav, clipped, streamer)
+            self._asr_and_inject(wav, clipped, streamer)
+        finally:
+            with self._ptt_lock:
+                self._ptt_state = "idle"
 
     def _asr_and_inject(
         self, wav: bytes, clipped: bool, streamer: StreamingTranscriber | None

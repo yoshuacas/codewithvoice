@@ -60,8 +60,8 @@ growing slice of decoded sample audio.
 - **DO NOT** add a daemon/socket for external speak requests — the file spool (`spool.py`) is the supported IPC; keep `hooks/speak-summary.py` stdlib-only (it must run outside this venv) and keep spool writes atomic (tmp file, then rename).
 - **DO NOT** add models that won't fit comfortably in RAM next to normal apps; a 10 GB Gemma-as-ASR experiment thrashed 32 GB into 44 GB of swap. Memory-pressure check: if the process RSS ≪ VSZ, the model is paged out — free RAM, don't tune inference.
 - `Recorder.samplerate` is the **output** rate (16 kHz). Some mics (Anker PowerConf and other USB/conferencing devices) reject opening at 16 kHz with CoreAudio `-10851` and silently capture nothing; `start()` falls back to the device's native rate and `_to_output()` resamples on read. Keep all read paths (`stop`/`snapshot`/`drain_new`) routed through `_to_output` — don't reintroduce a raw `samplerate` open as the only attempt.
-- **NEVER** do blocking work in a pynput hotkey callback — it runs on the CGEventTap thread; a callback that doesn't return freezes *every* hotkey (macOS may also disable the tap). `_on_ptt_down`/`_on_ptt_up` must only flip state and spawn threads; the heavy release path lives in `app.py:_finish_ptt`.
-- **NEVER** let `Recorder` block indefinitely on closing the stream: PortAudio's `Pa_StopStream` can deadlock against the CoreAudio HAL IO thread (observed 2026-08-25: `AudioOutputUnitStop` held the AudioUnit mutex waiting on the HAL IO mutex, whose owner was inside PortAudio's `startStopCallback` waiting on the AudioUnit mutex — app froze at 🔴 forever). `stop_internal()` closes the stream on a helper thread with a bounded join (`STOP_TIMEOUT_SECONDS`) and abandons it on timeout; the per-stream `accept` flag keeps an abandoned stream's late callbacks from polluting the next recording. Captured frames must never depend on the stream closing.
+- **NEVER** do blocking work in a pynput hotkey callback — it runs on the CGEventTap thread; a callback that doesn't return freezes *every* hotkey (macOS may also disable the tap). `_on_ptt_down`/`_on_ptt_up` must only flip the PTT state machine (`_ptt_state` under `_ptt_lock`: idle → starting → recording → finishing) and spawn threads; the mic open lives in `app.py:_begin_ptt`, the heavy release path in `app.py:_finish_ptt`. The `_ptt_release_pending` flag covers a release that arrives while the mic is still opening — `_begin_ptt` then runs the finish path itself. (Observed 2026-09-02: `recorder.start()` in the down callback blocked on the HAL mutex an abandoned close still held; the tap froze and every hotkey died until relaunch.)
+- **NEVER** let `Recorder` block indefinitely on closing **or opening** the stream: PortAudio's `Pa_StopStream` can deadlock against the CoreAudio HAL IO thread (observed 2026-08-25: `AudioOutputUnitStop` held the AudioUnit mutex waiting on the HAL IO mutex, whose owner was inside PortAudio's `startStopCallback` waiting on the AudioUnit mutex — app froze at 🔴 forever). `stop_internal()` closes the stream on a helper thread with a bounded join (`STOP_TIMEOUT_SECONDS`) and abandons it on timeout; the per-stream `accept` flag keeps an abandoned stream's late callbacks from polluting the next recording. Captured frames must never depend on the stream closing. The open side is bounded the same way (`OPEN_TIMEOUT_SECONDS`, raises `StreamOpenTimeout`, no native-rate retry): an abandoned close keeps holding the HAL mutex, so the *next* `Pa_OpenStream` deadlocks on it — only an app restart recovers, and the timeout turns that into a sticky ⚠ instead of a hung thread.
 - Debugging a hung bundled app: `sample <pid> 3 -file out.txt` gives native stacks without root (py-spy needs sudo). Look for paired `__psynch_mutexwait` holders across threads.
 - pyobjc packages in `pyproject.toml` are lowercase (`pyobjc-framework-cocoa`); `AppKit` ships inside `pyobjc-framework-cocoa`.
 
@@ -115,8 +115,12 @@ working:
   touching `scripts/launcher.c`.
 - `en_core_web_sm` is pre-installed at build time — misaki (kokoro's G2P)
   otherwise runs `pip install` at runtime, which fails inside the bundle.
-- Builds are ad-hoc signed (`SIGN_IDENTITY` env var overrides); the Developer
-  ID signing/notarization seam is marked in the script.
+- Signing: the script auto-uses a keychain identity named `CodeWithVoice
+  Signing` when present (stable TCC identity across rebuilds; CLI creation
+  recipe in `docs/guide/fix-permissions.md` — note `openssl pkcs12 -legacy`,
+  since `security import` can't read OpenSSL 3's default PKCS12 format);
+  `SIGN_IDENTITY` env var overrides; falls back to ad-hoc. The Developer ID
+  signing/notarization seam is marked in the script.
 - **Start at Login** in the bundled app uses `SMAppService`
   (`src/voicebar/login_item.py`) — this is a sanctioned Login Item, not the
   banned launchd-daemon topology. The menu item only appears when
@@ -145,5 +149,9 @@ Missing-Accessibility is the sneakiest state: hotkeys and ASR work (log shows
 `[asr]` lines) but synthesized keystrokes/⌘V are dropped with no error — text
 just never appears. pynput's startup line `This process is not trusted!` in
 the log means Input Monitoring/Accessibility is missing. To stop re-granting
-on every rebuild, sign with a stable identity: create a self-signed Code
-Signing cert in Keychain Access, then `SIGN_IDENTITY="<certname>" make app`.
+on every rebuild, sign with a stable identity: a self-signed cert named
+`CodeWithVoice Signing` is picked up automatically by `make app` (created
+2026-09-02 on David's machine; creation recipe in
+`docs/guide/fix-permissions.md`). Switching an installed ad-hoc build to the
+signed identity needs one last `tccutil` reset + re-grant; later rebuilds
+keep the grants.
